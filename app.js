@@ -10,19 +10,31 @@ const XLSX = require('xlsx');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE'] } });
+const io = new Server(server, { 
+  cors: { 
+    origin: "*", 
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true
+  } 
+});
 
-app.use(cors());
+// Middleware
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-const sequelize = new Sequelize({ dialect: 'sqlite', storage: './ct20_data.db', logging: false });
+// Database Setup
+const sequelize = new Sequelize({ 
+  dialect: 'sqlite', 
+  storage: './ct20_data.db', 
+  logging: false 
+});
 
 const User = sequelize.define('User', {
-  username: { type: DataTypes.STRING, unique: true },
-  passwordHash: DataTypes.STRING,
+  username: { type: DataTypes.STRING, unique: true, allowNull: false },
+  passwordHash: { type: DataTypes.STRING, allowNull: false },
   role: { type: DataTypes.STRING, defaultValue: 'viewer' }
 });
 
@@ -36,25 +48,34 @@ const Assembly = sequelize.define('Assembly', {
 
 const JWT_SECRET = 'super-secret-key-change-in-production';
 
+// Initialize DB & Create Admin
 async function initDB() {
-  await sequelize.sync();
-  const count = await User.count();
-  if (count === 0) {
-    const hash = await bcrypt.hash('admin123', 10);
-    await User.create({ username: 'admin', passwordHash: hash, role: 'admin' });
-    console.log('Admin created: admin / admin123');
+  try {
+    await sequelize.sync({ force: false }); // Don't drop tables, just sync
+    const count = await User.count();
+    if (count === 0) {
+      const hash = await bcrypt.hash('admin123', 10);
+      await User.create({ username: 'admin', passwordHash: hash, role: 'admin' });
+      console.log('✅ Default Admin Created: admin / admin123');
+    } else {
+      console.log('ℹ️ Users already exist. Count:', count);
+    }
+  } catch (err) {
+    console.error('❌ DB Init Error:', err);
   }
 }
 
 function authenticate(req, res, next) {
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' });
+  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token provided' });
   const token = auth.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
-  } catch { return res.status(401).json({ error: 'Invalid token' }); }
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
 }
 
 function requireAdmin(req, res, next) {
@@ -62,7 +83,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// LOGIN PAGE
+// --- LOGIN PAGE ---
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -76,39 +97,63 @@ app.get('/', (req, res) => {
         .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 350px; text-align: center; }
         h1 { color: #6d4aff; margin-bottom: 1.5rem; font-size: 1.5rem; }
         input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-        button { width: 100%; padding: 12px; background: #6d4aff; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        button { width: 100%; padding: 12px; background: #6d4aff; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: background 0.2s; }
         button:hover { background: #5a42d6; }
-        .error { color: #d32f2f; margin-top: 10px; font-size: 14px; display: none; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .error { color: #d32f2f; margin-top: 10px; font-size: 14px; display: none; background: #ffebee; padding: 8px; border-radius: 4px; }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #6d4aff; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block; margin-left: 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
       </style>
     </head>
     <body>
       <div class="card">
         <h1>🏭 CT20 Tracker</h1>
-        <input type="text" id="username" placeholder="Username">
+        <input type="text" id="username" placeholder="Username" autocomplete="off">
         <input type="password" id="password" placeholder="Password">
-        <button onclick="handleLogin()">Login</button>
-        <div id="error" class="error"></div>
+        <button id="loginBtn" onclick="handleLogin()">Login</button>
+        <div id="errorMsg" class="error"></div>
       </div>
       <script>
         async function handleLogin() {
-          const u = document.getElementById('username').value;
+          const u = document.getElementById('username').value.trim();
           const p = document.getElementById('password').value;
-          const err = document.getElementById('error');
-          if(!u || !p) { err.innerText = "Fill all fields"; err.style.display = 'block'; return; }
+          const btn = document.getElementById('loginBtn');
+          const err = document.getElementById('errorMsg');
+          
+          if(!u || !p) {
+            err.innerText = "Please enter both username and password.";
+            err.style.display = 'block';
+            return;
+          }
+
+          btn.disabled = true;
+          btn.innerHTML = 'Logging in... <div class="loader"></div>';
+          err.style.display = 'none';
+
           try {
-            const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
-            const data = await res.json();
-            if (data.token) {
+            // Using absolute path to ensure it hits the correct endpoint
+            const response = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username: u, password: p })
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.token) {
               localStorage.setItem('ct20_token', data.token);
               localStorage.setItem('ct20_role', data.user.role);
+              localStorage.setItem('ct20_user', data.user.username);
               window.location.href = '/dashboard';
             } else {
-              err.innerText = data.error;
-              err.style.display = 'block';
+              throw new Error(data.error || 'Login failed');
             }
-          } catch (e) {
-            err.innerText = "Network error";
+          } catch (error) {
+            console.error('Login Error:', error);
+            err.innerText = error.message || "Network error. Please try again.";
             err.style.display = 'block';
+            btn.disabled = false;
+            btn.innerText = 'Login';
           }
         }
       </script>
@@ -117,7 +162,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// DASHBOARD PAGE (Original Working Version)
+// --- DASHBOARD PAGE ---
 app.get('/dashboard', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -130,7 +175,7 @@ app.get('/dashboard', (req, res) => {
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f9fa; margin: 0; padding: 20px; }
         .container { max-width: 800px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
         h1 { color: #333; margin: 0; font-size: 1.5rem; }
         .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; margin-left: 5px; }
         .btn-logout { background: #d32f2f; color: white; }
@@ -267,15 +312,29 @@ app.get('/dashboard', (req, res) => {
 // API: Login
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
-  const user = await User.findOne({ where: { username } });
-  if (!user || !(await bcrypt.compare(password, user.passwordHash))) return res.status(401).json({ error: 'Invalid credentials' });
-  const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
-  res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  
+  try {
+    const user = await User.findOne({ where: { username } });
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+    
+    const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
+    res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+  } catch (err) {
+    console.error('Login Error:', err);
+    res.status(500).json({ error: 'Server error during login' });
+  }
 });
 
 // API: Get Assemblies
 app.get('/api/assemblies', authenticate, (req, res) => {
-  Assembly.findAll().then(assemblies => res.json(assemblies));
+  Assembly.findAll().then(assemblies => res.json(assemblies)).catch(err => {
+    console.error('Fetch Error:', err);
+    res.status(500).json({ error: 'Failed to fetch data' });
+  });
 });
 
 // API: Import Excel (Admin Only)
@@ -285,6 +344,7 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
     if (!sheetData.length) return res.status(400).json({ error: "Excel file is empty" });
+    
     const assembliesToSave = sheetData.map((row, index) => ({
       assemblyNumber: row['Assembly Number'] || row['assemblyNumber'] || 'AUTO-' + Date.now() + '-' + index,
       assemblyName: row['Assembly Name'] || row['assemblyName'] || 'Unknown',
@@ -292,29 +352,30 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
       percentComplete: parseFloat(row['Percent'] || row['percentComplete'] || 0),
       status: row['Status'] || row['status'] || 'Pending'
     }));
+    
     let count = 0;
-    for (const asm of assembliesToSave) { await Assembly.upsert(asm); count++; }
+    for (const asm of assembliesToSave) { 
+      await Assembly.upsert(asm); 
+      count++; 
+    }
+    
     io.emit('data_updated', { count });
     res.json({ success: true, count, message: "Imported " + count + " assemblies." });
   } catch (err) {
-    console.error(err);
+    console.error('Import Error:', err);
     res.status(500).json({ error: "Failed to parse file." });
   }
 });
 
 const PORT = process.env.PORT || 3001;
 async function start() {
-  try {
-    await initDB();
-    server.listen(PORT, '0.0.0.0', () => {
-      console.log('========================================');
-      console.log('  CT20 Assembly Tracker - LIVE!');
-      console.log('  Listening on port ' + PORT);
-      console.log('========================================');
-    });
-  } catch (err) {
-    console.error('Failed to start:', err);
-    process.exit(1);
-  }
+  await initDB();
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log('========================================');
+    console.log('  CT20 Assembly Tracker - LIVE!');
+    console.log('  Listening on port ' + PORT);
+    console.log('========================================');
+  });
 }
 start();
+
