@@ -17,7 +17,7 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Multer Setup (Memory Storage for Excel)
+// Multer Setup
 const upload = multer({ storage: multer.memoryStorage() });
 
 // Database Setup
@@ -42,10 +42,9 @@ const Assembly = sequelize.define('Assembly', {
   status: DataTypes.STRING
 });
 
-// Auth Secret
 const JWT_SECRET = 'super-secret-key-change-in-production';
 
-// Initialize DB & Create Admin
+// Initialize DB
 async function initDB() {
   await sequelize.sync();
   const count = await User.count();
@@ -56,27 +55,20 @@ async function initDB() {
   }
 }
 
-// --- MIDDLEWARE ---
-
+// Middleware
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No token' });
-  }
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' });
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
-  } catch (e) {
-    res.status(401).json({ error: 'Invalid token' });
-  }
+  } catch { return res.status(401).json({ error: 'Invalid token' }); }
 }
 
 function requireAdmin(req, res, next) {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
   next();
 }
 
@@ -117,34 +109,25 @@ app.get('/', (req, res) => {
           const p = document.getElementById('password').value;
           const err = document.getElementById('error');
           const loader = document.getElementById('loader');
-          
           if(!u || !p) { err.innerText = "Please fill all fields"; err.style.display = 'block'; return; }
-          
           err.style.display = 'none';
           loader.style.display = 'block';
-          
           try {
-            const res = await fetch('/api/auth/login', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ username: u, password: p })
-            });
+            const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
             const data = await res.json();
-            
             if (data.token) {
               localStorage.setItem('ct20_token', data.token);
               localStorage.setItem('ct20_role', data.user.role);
+              localStorage.setItem('ct20_user', data.user.username);
               window.location.href = '/dashboard';
             } else {
               err.innerText = data.error || "Login failed";
               err.style.display = 'block';
             }
           } catch (e) {
-            err.innerText = "Network error. Check connection.";
+            err.innerText = "Network error.";
             err.style.display = 'block';
-          } finally {
-            loader.style.display = 'none';
-          }
+          } finally { loader.style.display = 'none'; }
         }
       </script>
     </body>
@@ -152,7 +135,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 2. Dashboard Page (With Real-Time Updates & Toasts)
+// 2. Main Dashboard (Includes Users Tab for Admins)
 app.get('/dashboard', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -167,7 +150,8 @@ app.get('/dashboard', (req, res) => {
         .container { max-width: 800px; margin: 0 auto; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
         h1 { color: #333; margin: 0; font-size: 1.5rem; }
-        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; }
+        .nav-btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; background: #eee; color: #333; margin-right: 5px; }
+        .nav-btn.active { background: #6d4aff; color: white; }
         .btn-logout { background: #d32f2f; color: white; }
         .btn-upload { background: #4caf50; color: white; }
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px; }
@@ -187,12 +171,16 @@ app.get('/dashboard', (req, res) => {
         .progress-fill { height: 100%; background: #6d4aff; }
         .loading { text-align: center; padding: 40px; color: #666; }
         .role-badge { font-size: 12px; background: #eee; padding: 2px 6px; border-radius: 4px; margin-left: 10px; }
-        
-        /* Toast Styles */
         #toast { visibility: hidden; min-width: 250px; margin-left: -125px; background-color: #333; color: #fff; text-align: center; border-radius: 8px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; font-size: 17px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
         #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
         @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
         @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+        
+        /* User Table Styles */
+        .user-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
+        .user-info { display: flex; flex-direction: column; }
+        .user-role { font-size: 12px; color: #666; }
+        .delete-btn { background: #ff5252; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
       </style>
     </head>
     <body>
@@ -200,47 +188,91 @@ app.get('/dashboard', (req, res) => {
         <div class="header">
           <div>
             <h1>🏭 CT20 Assembly Tracker</h1>
+            <span id="user-display" style="font-size: 14px; color: #666;"></span>
             <span id="user-role" class="role-badge"></span>
           </div>
           <div>
-            <label for="excel-upload" class="btn btn-upload" id="upload-btn" style="display:none; cursor: pointer;">📤 Upload Excel</label>
-            <input type="file" id="excel-upload" accept=".xlsx, .xls" style="display: none;" onchange="handleFileUpload(this)">
+            <button class="nav-btn active" onclick="showTab('dashboard')">Dashboard</button>
+            <button class="nav-btn" id="users-tab-btn" style="display:none;" onclick="showTab('users')">Users</button>
             <button class="btn btn-logout" onclick="logout()">Logout</button>
           </div>
         </div>
 
-        <div class="stat-grid">
-          <div class="stat-card"><div class="stat-val" id="total">-</div><div class="stat-label">Total</div></div>
-          <div class="stat-card"><div class="stat-val" id="done" style="color: green;">-</div><div class="stat-label">Completed</div></div>
-          <div class="stat-card"><div class="stat-val" id="prog" style="color: orange;">-</div><div class="stat-label">In Progress</div></div>
+        <!-- DASHBOARD TAB -->
+        <div id="dashboard-tab">
+          <div class="stat-grid">
+            <div class="stat-card"><div class="stat-val" id="total">-</div><div class="stat-label">Total</div></div>
+            <div class="stat-card"><div class="stat-val" id="done" style="color: green;">-</div><div class="stat-label">Completed</div></div>
+            <div class="stat-card"><div class="stat-val" id="prog" style="color: orange;">-</div><div class="stat-label">In Progress</div></div>
+          </div>
+
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+              <h3>Assembly List</h3>
+              <label for="excel-upload" class="btn btn-upload" id="upload-btn" style="display:none; cursor: pointer; padding: 8px 16px;">📤 Upload Excel</label>
+              <input type="file" id="excel-upload" accept=".xlsx, .xls" style="display: none;" onchange="handleFileUpload(this)">
+            </div>
+            <div id="content"><div class="loading">Loading data...</div></div>
+          </div>
         </div>
 
-        <div class="card">
-          <h3>Assembly List</h3>
-          <div id="content"><div class="loading">Loading data...</div></div>
+        <!-- USERS TAB (Admin Only) -->
+        <div id="users-tab" style="display:none;">
+          <div class="card">
+            <h3>Create New User</h3>
+            <div style="display:flex; gap:10px; margin-bottom:20px;">
+              <input type="text" id="new-user" placeholder="Username" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:6px;">
+              <input type="text" id="new-pass" placeholder="Password" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:6px;">
+              <select id="new-role" style="padding:10px; border:1px solid #ddd; border-radius:6px;">
+                <option value="viewer">Viewer</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button class="btn" style="background:#6d4aff; color:white;" onclick="createUser()">Add</button>
+            </div>
+            <h3>Existing Users</h3>
+            <div id="user-list">Loading...</div>
+          </div>
         </div>
       </div>
 
-      <!-- Toast Element -->
       <div id="toast">✨ New data uploaded!</div>
 
       <script>
         const token = localStorage.getItem('ct20_token');
         const role = localStorage.getItem('ct20_role');
+        const username = localStorage.getItem('ct20_user');
+        
         if (!token) { window.location.href = '/'; }
 
+        document.getElementById('user-display').innerText = 'Logged in as: ' + username;
+        document.getElementById('user-role').innerText = role.toUpperCase();
+
+        // Show Users tab only for Admins
         if (role === 'admin') {
+          document.getElementById('users-tab-btn').style.display = 'inline-block';
           document.getElementById('upload-btn').style.display = 'inline-block';
-          document.getElementById('user-role').innerText = 'Admin';
-        } else {
-          document.getElementById('user-role').innerText = 'Viewer';
+          loadUsers();
         }
 
-        // Socket.IO Connection
+        function showTab(tabName) {
+          document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+          event.target.classList.add('active');
+          if (tabName === 'dashboard') {
+            document.getElementById('dashboard-tab').style.display = 'block';
+            document.getElementById('users-tab').style.display = 'none';
+            loadData();
+          } else {
+            document.getElementById('dashboard-tab').style.display = 'none';
+            document.getElementById('users-tab').style.display = 'block';
+            loadUsers();
+          }
+        }
+
+        // --- DASHBOARD FUNCTIONS ---
         const socket = io();
         socket.on('data_updated', (data) => {
           showToast('✨ New data received! (' + data.count + ' items)');
-          loadData(); // Auto-reload data
+          loadData();
         });
 
         function showToast(message) {
@@ -302,7 +334,81 @@ app.get('/dashboard', (req, res) => {
           }
         }
 
+        // --- USER MANAGEMENT FUNCTIONS ---
+        async function loadUsers() {
+          try {
+            const res = await fetch('/api/users', { headers: { 'Authorization': 'Bearer ' + token } });
+            const users = await res.json();
+            const list = document.getElementById('user-list');
+            if (users.length === 0) {
+              list.innerHTML = '<p>No users found.</p>';
+              return;
+            }
+            let html = '';
+            users.forEach(u => {
+              html += '<div class="user-row"><div class="user-info"><strong>' + u.username + '</strong><span class="user-role">' + u.role + '</span></div>';
+              if (u.username !== 'admin') {
+                html += '<button class="delete-btn" onclick="deleteUser(\'' + u.username + '\')">Delete</button>';
+              } else {
+                html += '<span style="color:#aaa; font-size:12px;">(Super Admin)</span>';
+              }
+              html += '</div>';
+            });
+            list.innerHTML = html;
+          } catch (err) {
+            document.getElementById('user-list').innerHTML = '<p style="color:red;">Error loading users.</p>';
+          }
+        }
+
+        async function createUser() {
+          const u = document.getElementById('new-user').value;
+          const p = document.getElementById('new-pass').value;
+          const r = document.getElementById('new-role').value;
+          if (!u || !p) { alert("Please fill username and password"); return; }
+          
+          try {
+            const res = await fetch('/api/users/create', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username: u, password: p, role: r })
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert("User created!");
+              document.getElementById('new-user').value = '';
+              document.getElementById('new-pass').value = '';
+              loadUsers();
+            } else {
+              alert("Error: " + data.error);
+            }
+          } catch (e) {
+            alert("Network error.");
+          }
+        }
+
+        async function deleteUser(username) {
+          if(!confirm("Delete user " + username + "?")) return;
+          try {
+            const res = await fetch('/api/users/delete', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username: username })
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert("User deleted!");
+              loadUsers();
+            } else {
+              alert("Error: " + data.error);
+            }
+          } catch (e) {
+            alert("Network error.");
+          }
+        }
+
         function logout() { localStorage.clear(); window.location.href = '/'; }
+        
+        // Load initial data
         loadData();
       </script>
     </body>
@@ -343,12 +449,52 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
     let count = 0;
     for (const asm of assembliesToSave) { await Assembly.upsert(asm); count++; }
     
-    // FIXED LINE: Using simple string concatenation instead of template literals
     io.emit('data_updated', { count }); 
     res.json({ success: true, count, message: "Imported " + count + " assemblies." });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to parse file." });
+  }
+});
+
+// --- NEW: USER MANAGEMENT API ---
+
+// Get all users (Admin Only)
+app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
+  const users = await User.findAll({ attributes: ['username', 'role'] });
+  res.json(users);
+});
+
+// Create user (Admin Only)
+app.post('/api/users/create', authenticate, requireAdmin, async (req, res) => {
+  const { username, password, role } = req.body;
+  if (!username || !password) return res.status(400).json({ error: "Username and password required" });
+  
+  try {
+    const existing = await User.findOne({ where: { username } });
+    if (existing) return res.status(400).json({ error: "Username already exists" });
+    
+    const hash = await bcrypt.hash(password, 10);
+    await User.create({ username, passwordHash: hash, role: role || 'viewer' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+// Delete user (Admin Only)
+app.post('/api/users/delete', authenticate, requireAdmin, async (req, res) => {
+  const { username } = req.body;
+  if (username === 'admin') return res.status(403).json({ error: "Cannot delete super admin" });
+  
+  try {
+    const user = await User.findOne({ where: { username } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    
+    await user.destroy();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete user" });
   }
 });
 
@@ -371,3 +517,4 @@ async function start() {
 }
 
 start();
+
