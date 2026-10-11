@@ -5,6 +5,8 @@ const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Sequelize, DataTypes } = require('sequelize');
+const multer = require('multer');
+const XLSX = require('xlsx');
 
 const app = express();
 const server = http.createServer(app);
@@ -14,6 +16,9 @@ const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST', 'P
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Multer Setup (Memory Storage for Excel)
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Database Setup
 const sequelize = new Sequelize({
@@ -26,7 +31,7 @@ const sequelize = new Sequelize({
 const User = sequelize.define('User', {
   username: { type: DataTypes.STRING, unique: true },
   passwordHash: DataTypes.STRING,
-  role: { type: DataTypes.STRING, defaultValue: 'viewer' }
+  role: { type: DataTypes.STRING, defaultValue: 'viewer' } // 'admin' or 'viewer'
 });
 
 const Assembly = sequelize.define('Assembly', {
@@ -47,8 +52,32 @@ async function initDB() {
   if (count === 0) {
     const hash = await bcrypt.hash('admin123', 10);
     await User.create({ username: 'admin', passwordHash: hash, role: 'admin' });
-    console.log('✅ Default Admin created: admin / admin123');
+    console.log('✅ Default Admin created: admin / admin123 (Role: admin)');
   }
+}
+
+// --- MIDDLEWARE ---
+
+function authenticate(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'No token' });
+  }
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (e) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
 }
 
 // --- ROUTES ---
@@ -104,6 +133,7 @@ app.get('/', (req, res) => {
             
             if (data.token) {
               localStorage.setItem('ct20_token', data.token);
+              localStorage.setItem('ct20_role', data.user.role);
               window.location.href = '/dashboard';
             } else {
               err.innerText = data.error || "Login failed";
@@ -122,8 +152,10 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 2. Dashboard Page (With Load Demo Button)
+// 2. Dashboard Page
 app.get('/dashboard', (req, res) => {
+  const token = req.headers.authorization ? req.headers.authorization.split(' ')[1] : null;
+  
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -138,7 +170,7 @@ app.get('/dashboard', (req, res) => {
         h1 { color: #333; margin: 0; font-size: 1.5rem; }
         .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; }
         .btn-logout { background: #d32f2f; color: white; }
-        .btn-demo { background: #4caf50; color: white; }
+        .btn-upload { background: #4caf50; color: white; }
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px; }
         .stat-card { background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #6d4aff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .stat-val { font-size: 1.5rem; font-weight: bold; color: #333; }
@@ -155,14 +187,23 @@ app.get('/dashboard', (req, res) => {
         .progress-bar { width: 100px; height: 8px; background: #eee; border-radius: 4px; overflow: hidden; }
         .progress-fill { height: 100%; background: #6d4aff; }
         .loading { text-align: center; padding: 40px; color: #666; }
+        .role-badge { font-size: 12px; background: #eee; padding: 2px 6px; border-radius: 4px; margin-left: 10px; }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="header">
-          <h1>🏭 CT20 Assembly Tracker</h1>
           <div>
-            <button class="btn btn-demo" onclick="loadDemo()">📥 Load Demo Data</button>
+            <h1>🏭 CT20 Assembly Tracker</h1>
+            <span id="user-role" class="role-badge"></span>
+          </div>
+          <div>
+            <!-- Upload Button (Only visible to admins via JS check) -->
+            <label for="excel-upload" class="btn btn-upload" id="upload-btn" style="display:none; cursor: pointer;">
+              📤 Upload Excel
+            </label>
+            <input type="file" id="excel-upload" accept=".xlsx, .xls" style="display: none;" onchange="handleFileUpload(this)">
+            
             <button class="btn btn-logout" onclick="logout()">Logout</button>
           </div>
         </div>
@@ -183,21 +224,49 @@ app.get('/dashboard', (req, res) => {
 
       <script>
         const token = localStorage.getItem('ct20_token');
+        const role = localStorage.getItem('ct20_role');
+        
         if (!token) { window.location.href = '/'; }
 
-        async function loadDemo() {
-          if(!confirm("Load sample data? This will add 3 test assemblies.")) return;
+        // Show upload button only for admins
+        if (role === 'admin') {
+          document.getElementById('upload-btn').style.display = 'inline-block';
+          document.getElementById('user-role').innerText = 'Admin';
+        } else {
+          document.getElementById('user-role').innerText = 'Viewer';
+        }
+
+        async function handleFileUpload(inputElement) {
+          const file = inputElement.files[0];
+          if (!file) return;
+
+          const formData = new FormData();
+          formData.append('file', file);
+          
+          const btn = document.getElementById('upload-btn');
+          btn.innerText = 'Uploading...';
+          btn.disabled = true;
+
           try {
-            const res = await fetch('/api/upload-excel', { method: 'POST' });
+            const res = await fetch('/api/import', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token },
+              body: formData
+            });
+
             const data = await res.json();
-            if(data.success) {
-              alert("✅ Loaded " + data.count + " sample assemblies!");
+            if (data.success) {
+              alert(\`✅ Success! Imported \${data.count} assemblies.\`);
               location.reload();
             } else {
-              alert("❌ Error loading data.");
+              alert(\`❌ Error: \${data.error}\`);
             }
-          } catch(e) {
-            alert("Network error.");
+          } catch (e) {
+            alert("❌ Network error during upload.");
+          } finally {
+            btn.innerText = '📤 Upload Excel';
+            btn.disabled = false;
+            inputElement.value = '';
           }
         }
 
@@ -209,6 +278,7 @@ app.get('/dashboard', (req, res) => {
             
             if (res.status === 401) {
               localStorage.removeItem('ct20_token');
+              localStorage.removeItem('ct20_role');
               window.location.href = '/';
               return;
             }
@@ -222,7 +292,7 @@ app.get('/dashboard', (req, res) => {
             document.getElementById('prog').innerText = data.filter(a => a.percentComplete > 0 && a.percentComplete < 100).length;
 
             if (data.length === 0) {
-              document.getElementById('content').innerHTML = '<p style="text-align:center; color:#666;">No assemblies found. Click "Load Demo Data" to start.</p>';
+              document.getElementById('content').innerHTML = '<p style="text-align:center; color:#666;">No assemblies found. Admins can upload an Excel file.</p>';
               return;
             }
 
@@ -253,6 +323,7 @@ app.get('/dashboard', (req, res) => {
 
         function logout() {
           localStorage.removeItem('ct20_token');
+          localStorage.removeItem('ct20_role');
           window.location.href = '/';
         }
 
@@ -277,32 +348,51 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // API: Get Assemblies
-app.get('/api/assemblies', (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No token' });
-  }
-  
-  const token = authHeader.split(' ')[1];
-  try {
-    jwt.verify(token, JWT_SECRET);
-    Assembly.findAll().then(assemblies => res.json(assemblies));
-  } catch (e) {
-    res.status(401).json({ error: 'Invalid token' });
-  }
+app.get('/api/assemblies', authenticate, (req, res) => {
+  Assembly.findAll().then(assemblies => res.json(assemblies));
 });
 
-// API: Upload Demo Data
-app.post('/api/upload-excel', (req, res) => {
-  const samples = [
-    { assemblyNumber: 'GP-1249-00SB', assemblyName: 'Stopper Pin Assembly', qtyRequired: 5, percentComplete: 0, status: 'In Progress' },
-    { assemblyNumber: 'T310-ST-20-32_00_000SB', assemblyName: 'Trolley Assembly', qtyRequired: 4, percentComplete: 68, status: 'In Progress' },
-    { assemblyNumber: 'T310-ST-20-04_00_000SB-L7', assemblyName: 'Frame Assembly', qtyRequired: 2, percentComplete: 100, status: 'Complete' }
-  ];
-  
-  Promise.all(samples.map(s => Assembly.upsert(s))).then(() => {
-    res.json({ success: true, count: samples.length });
-  });
+// API: Import Excel (Admin Only)
+app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  try {
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+    if (!sheetData.length) {
+      return res.status(400).json({ error: "Excel file is empty" });
+    }
+
+    // Map Excel columns to Database fields
+    // Expected Excel Headers: "Assembly Number", "Assembly Name", "Quantity", "Percent", "Status"
+    const assembliesToSave = sheetData.map((row, index) => {
+      return {
+        assemblyNumber: row['Assembly Number'] || row['assemblyNumber'] || `AUTO-${Date.now()}-${index}`,
+        assemblyName: row['Assembly Name'] || row['assemblyName'] || 'Unknown Assembly',
+        qtyRequired: parseInt(row['Quantity'] || row['qtyRequired'] || 1),
+        percentComplete: parseFloat(row['Percent'] || row['percentComplete'] || 0),
+        status: row['Status'] || row['status'] || 'Pending'
+      };
+    });
+
+    // Upsert (Update or Insert) each assembly
+    let count = 0;
+    for (const asm of assembliesToSave) {
+      await Assembly.upsert(asm);
+      count++;
+    }
+
+    io.emit('data_updated', { count }); // Notify all connected clients
+    res.json({ success: true, count, message: \`Successfully imported \${count} assemblies.\` });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to parse Excel file. Check column headers." });
+  }
 });
 
 // Start Server
@@ -312,9 +402,10 @@ async function start() {
     console.log('\n========================================');
     console.log('  🚀 CT20 Assembly Tracker - LIVE!');
     console.log('  🌐 http://localhost:3001');
-    console.log('  👤 User: admin | Pass: admin123');
+    console.log('  👤 User: admin | Pass: admin123 (Role: Admin)');
     console.log('========================================\n');
   });
 }
 
 start();
+
