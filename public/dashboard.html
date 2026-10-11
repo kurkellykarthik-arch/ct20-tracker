@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CT20 Dashboard</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f8f9fa; margin: 0; padding: 20px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; margin-left: 5px; }
+    .btn-logout { background: #d32f2f; color: white; }
+    .btn-upload { background: #4caf50; color: white; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
+    .stat-card { background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #6d4aff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .stat-val { font-size: 1.5rem; font-weight: bold; }
+    .stat-label { font-size: 0.85rem; color: #666; }
+    .card { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); padding: 20px; margin-bottom: 20px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 800px; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #6d4aff; color: white; font-weight: 600; }
+    .editable-cell input, .editable-cell select { width: 100%; padding: 4px; border: 1px solid #ddd; border-radius: 4px; }
+    #toast { visibility: hidden; min-width: 250px; background: #333; color: #fff; text-align: center; border-radius: 8px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; }
+    #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+    @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+    @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🏭 CT20 Assembly Tracker</h1>
+      <div>
+        <label for="excel-upload" class="btn btn-upload" id="upload-btn" style="display:none;cursor:pointer">📤 Upload Excel</label>
+        <input type="file" id="excel-upload" accept=".xlsx,.xls" style="display:none" onchange="handleFileUpload(this)">
+        <span id="save-msg" style="font-size:12px;color:#666;margin-left:10px;display:none">Saving...</span>
+        <button class="btn btn-logout" onclick="logout()">Logout</button>
+      </div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-val" id="total">-</div><div class="stat-label">Total Parts</div></div>
+      <div class="stat-card"><div class="stat-val" id="completed">-</div><div class="stat-label">Completed (%)</div></div>
+      <div class="stat-card"><div class="stat-val" id="in-progress">-</div><div class="stat-label">In Progress</div></div>
+    </div>
+    <div class="card">
+      <h3>Assembly List</h3>
+      <div id="content"><div style="text-align:center;padding:40px;color:#666">Loading data...</div></div>
+    </div>
+  </div>
+  <div id="toast"></div>
+  <script>
+    var token = localStorage.getItem("ct20_token");
+    var role = localStorage.getItem("ct20_role");
+    if (!token) { window.location.href = "/"; }
+    if (role === "admin") { document.getElementById("upload-btn").style.display = "inline-block"; }
+
+    var socket = io();
+    socket.on("data_updated", function(d) { showToast("Data Updated!"); loadData(); });
+
+    function showToast(m) {
+      var x = document.getElementById("toast");
+      x.innerText = m;
+      x.className = "show";
+      setTimeout(function(){ x.className = x.className.replace("show", ""); }, 3000);
+    }
+
+    function handleFileUpload(input) {
+      var f = input.files[0];
+      if (!f) return;
+      var fd = new FormData();
+      fd.append("file", f);
+      var btn = document.getElementById("upload-btn");
+      btn.innerText = "Uploading...";
+      btn.disabled = true;
+      fetch("/api/import", { method: "POST", headers: { "Authorization": "Bearer " + token }, body: fd })
+        .then(r => r.json())
+        .then(d => {
+          if (d.success) { alert("Success! Imported " + d.count + " parts."); location.reload(); }
+          else { alert("Error: " + d.error); }
+        })
+        .catch(e => { alert("Error"); })
+        .finally(function() { btn.innerText = "📤 Upload Excel"; btn.disabled = false; input.value = ""; });
+    }
+
+    function updatePart(pn, fld, val) {
+      document.getElementById("save-msg").style.display = "inline";
+      fetch("/api/update-part", { method: "POST", headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify({ partNumber: pn, field: fld, value: val }) })
+        .then(r => r.json())
+        .then(d => {
+          if (d.success) { showToast("Saved!"); loadData(); }
+          else { alert("Error: " + d.error); loadData(); }
+        })
+        .catch(e => { alert("Error"); loadData(); })
+        .finally(function() { document.getElementById("save-msg").style.display = "none"; });
+    }
+
+    function loadData() {
+      fetch("/api/assemblies", { headers: { "Authorization": "Bearer " + token } })
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById("total").innerText = data.length;
+          var c = data.filter(a => a.percentComplete >= 100).length;
+          var p = data.filter(a => a.percentComplete > 0 && a.percentComplete < 100).length;
+          document.getElementById("completed").innerText = c;
+          document.getElementById("in-progress").innerText = p;
+          
+          if (data.length === 0) {
+            document.getElementById("content").innerHTML = "<p style='text-align:center;color:#666'>No parts found. Upload Excel.</p>";
+            return;
+          }
+          
+          var h = "<table><thead><tr><th>Part No</th><th>Description</th><th>Qty Req</th><th>Qty Comp</th><th>% Complete</th><th>Status</th></tr></thead><tbody>";
+          data.forEach(a => {
+            var qc = Math.round(a.qtyRequired * (a.percentComplete / 100));
+            h += "<tr>";
+            h += "<td style='font-family:monospace;font-size:12px'>" + a.partNumber + "</td>";
+            h += "<td>" + a.description + "</td>";
+            h += "<td>" + a.qtyRequired + "</td>";
+            h += "<td><strong>" + qc + "</strong></td>";
+            h += "<td class='editable-cell'><input type='number' min='0' max='100' value='" + a.percentComplete + "' onchange='updatePart(\"" + a.partNumber + "\",\"percentComplete\",this.value)'></td>";
+            h += "<td class='editable-cell'><select onchange='updatePart(\"" + a.partNumber + "\",\"status\",this.value)'>";
+            h += "<option value='Pending' " + (a.status==="Pending"?"selected":"") + ">Pending</option>";
+            h += "<option value='In Progress' " + (a.status==="In Progress"?"selected":"") + ">In Progress</option>";
+            h += "<option value='Complete' " + (a.status==="Complete"?"selected":"") + ">Complete</option>";
+            h += "<option value='On Hold' " + (a.status==="On Hold"?"selected":"") + ">On Hold</option>";
+            h += "</select></td></tr>";
+          });
+          h += "</tbody></table>";
+          document.getElementById("content").innerHTML = h;
+        })
+        .catch(e => { document.getElementById("content").innerHTML = "<p style='color:red;text-align:center'>Error loading data.</p>"; });
+    }
+
+    function logout() { localStorage.clear(); window.location.href = "/"; }
+    loadData();
+  </script>
+</body>
+</html>
