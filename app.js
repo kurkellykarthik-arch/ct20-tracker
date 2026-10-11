@@ -62,12 +62,62 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// --- LOGIN PAGE ---
+// LOGIN PAGE
 app.get('/', (req, res) => {
-  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Login</title><style>body{font-family:sans-serif;background:#f0f2f5;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}.card{background:white;padding:2rem;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1);width:100%;max-width:350px;text-align:center}h1{color:#6d4aff}input{width:100%;padding:12px;margin:8px 0;border:1px solid #ddd;border-radius:6px;box-sizing:border-box}button{width:100%;padding:12px;background:#6d4aff;color:white;border:none;border-radius:6px;font-size:16px;font-weight:bold;cursor:pointer}button:hover{background:#5a42d6}</style></head><body><div class="card"><h1>🏭 CT20 Tracker</h1><input type="text" id="u" placeholder="Username"><input type="password" id="p" placeholder="Password"><button onclick="login()">Login</button><div id="msg" style="color:red;margin-top:10px;font-size:14px;"></div></div><script>async function login(){var u=document.getElementById("u").value;var p=document.getElementById("p").value;var m=document.getElementById("msg");if(!u||!p){m.innerText="Fill all fields";return;}fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})}).then(r=>r.json()).then(d=>{if(d.token){localStorage.setItem("ct20_token",d.token);localStorage.setItem("ct20_role",d.user.role);window.location.href="/dashboard";}else{m.innerText=d.error;}}).catch(e=>{m.innerText="Network Error";});}<\/script></body></html>');
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>CT20 Login</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 350px; text-align: center; }
+        h1 { color: #6d4aff; margin-bottom: 1.5rem; font-size: 1.5rem; }
+        input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+        button { width: 100%; padding: 12px; background: #6d4aff; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #5a42d6; }
+        .error { color: #d32f2f; margin-top: 10px; font-size: 14px; display: none; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h1>🏭 CT20 Tracker</h1>
+        <input type="text" id="username" placeholder="Username">
+        <input type="password" id="password" placeholder="Password">
+        <button onclick="handleLogin()">Login</button>
+        <div id="error" class="error"></div>
+      </div>
+      <script>
+        async function handleLogin() {
+          const u = document.getElementById('username').value;
+          const p = document.getElementById('password').value;
+          const err = document.getElementById('error');
+          if(!u || !p) { err.innerText = "Fill all fields"; err.style.display = 'block'; return; }
+          try {
+            const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+            const data = await res.json();
+            if (data.token) {
+              localStorage.setItem('ct20_token', data.token);
+              localStorage.setItem('ct20_role', data.user.role);
+              window.location.href = '/dashboard';
+            } else {
+              err.innerText = data.error;
+              err.style.display = 'block';
+            }
+          } catch (e) {
+            err.innerText = "Network error";
+            err.style.display = 'block';
+          }
+        }
+      </script>
+    </body>
+    </html>
+  `);
 });
 
-// --- DASHBOARD PAGE ---
+// DASHBOARD PAGE (Original Working Version)
 app.get('/dashboard', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -80,13 +130,11 @@ app.get('/dashboard', (req, res) => {
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f9fa; margin: 0; padding: 20px; }
         .container { max-width: 800px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         h1 { color: #333; margin: 0; font-size: 1.5rem; }
         .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; margin-left: 5px; }
         .btn-logout { background: #d32f2f; color: white; }
-        .btn-users { background: #6d4aff; color: white; }
         .btn-upload { background: #4caf50; color: white; }
-        .btn-demo { background: #2196f3; color: white; }
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px; }
         .stat-card { background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #6d4aff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .stat-val { font-size: 1.5rem; font-weight: bold; color: #333; }
@@ -103,8 +151,7 @@ app.get('/dashboard', (req, res) => {
         .progress-bar { width: 100px; height: 8px; background: #eee; border-radius: 4px; overflow: hidden; }
         .progress-fill { height: 100%; background: #6d4aff; }
         .loading { text-align: center; padding: 40px; color: #666; }
-        .role-badge { font-size: 12px; background: #eee; padding: 2px 6px; border-radius: 4px; margin-left: 10px; }
-        #toast { visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center; border-radius: 8px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; font-size: 17px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        #toast { visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center; border-radius: 8px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; font-size: 17px; }
         #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
         @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
         @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
@@ -113,49 +160,23 @@ app.get('/dashboard', (req, res) => {
     <body>
       <div class="container">
         <div class="header">
+          <h1>🏭 CT20 Assembly Tracker</h1>
           <div>
-            <h1>🏭 CT20 Assembly Tracker</h1>
-            <span id="user-display" style="font-size: 14px; color: #666;"></span>
-            <span id="user-role" class="role-badge"></span>
-          </div>
-          <div>
-            <button class="btn btn-users" id="users-btn" style="display:none" onclick="showTab('users')">Users</button>
-            <button class="btn btn-upload" id="upload-btn" style="display:none" onclick="document.getElementById('file-input').click()">📤 Upload Excel</button>
-            <button class="btn btn-demo" id="demo-btn" style="display:none" onclick="loadDemo()">📥 Load Demo</button>
-            <input type="file" id="file-input" style="display:none" accept=".xlsx, .xls" onchange="uploadFile(this)">
+            <label for="excel-upload" class="btn btn-upload" id="upload-btn" style="display:none; cursor: pointer;">📤 Upload Excel</label>
+            <input type="file" id="excel-upload" accept=".xlsx, .xls" style="display: none;" onchange="handleFileUpload(this)">
             <button class="btn btn-logout" onclick="logout()">Logout</button>
           </div>
         </div>
 
-        <!-- DASHBOARD TAB -->
-        <div id="dashboard-tab">
-          <div class="stat-grid">
-            <div class="stat-card"><div class="stat-val" id="total">-</div><div class="stat-label">Total</div></div>
-            <div class="stat-card"><div class="stat-val" id="done" style="color: green;">-</div><div class="stat-label">Completed</div></div>
-            <div class="stat-card"><div class="stat-val" id="prog" style="color: orange;">-</div><div class="stat-label">In Progress</div></div>
-          </div>
-          <div class="card">
-            <h3>Assembly List</h3>
-            <div id="content"><div class="loading">Loading data...</div></div>
-          </div>
+        <div class="stat-grid">
+          <div class="stat-card"><div class="stat-val" id="total">-</div><div class="stat-label">Total</div></div>
+          <div class="stat-card"><div class="stat-val" id="done" style="color: green;">-</div><div class="stat-label">Completed</div></div>
+          <div class="stat-card"><div class="stat-val" id="prog" style="color: orange;">-</div><div class="stat-label">In Progress</div></div>
         </div>
 
-        <!-- USERS TAB -->
-        <div id="users-tab" style="display:none;">
-          <div class="card">
-            <h3>Create New User</h3>
-            <div style="display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap;">
-              <input type="text" id="new-u" placeholder="Username" style="flex:1; min-width:120px; padding:10px; border:1px solid #ddd; border-radius:6px;">
-              <input type="text" id="new-p" placeholder="Password" style="flex:1; min-width:120px; padding:10px; border:1px solid #ddd; border-radius:6px;">
-              <select id="new-r" style="padding:10px; border:1px solid #ddd; border-radius:6px;">
-                <option value="viewer">Viewer</option>
-                <option value="admin">Admin</option>
-              </select>
-              <button class="btn btn-users" onclick="createUser()">Add</button>
-            </div>
-            <h3>Existing Users</h3>
-            <div id="user-list">Loading...</div>
-          </div>
+        <div class="card">
+          <h3>Assembly List</h3>
+          <div id="content"><div class="loading">Loading data...</div></div>
         </div>
       </div>
 
@@ -164,25 +185,10 @@ app.get('/dashboard', (req, res) => {
       <script>
         const token = localStorage.getItem('ct20_token');
         const role = localStorage.getItem('ct20_role');
-        const username = localStorage.getItem('ct20_user') || 'User';
-        
         if (!token) { window.location.href = '/'; }
 
-        document.getElementById('user-display').innerText = 'Logged in as: ' + username;
-        document.getElementById('user-role').innerText = role.toUpperCase();
-
         if (role === 'admin') {
-          document.getElementById('users-btn').style.display = 'inline-block';
           document.getElementById('upload-btn').style.display = 'inline-block';
-          document.getElementById('demo-btn').style.display = 'inline-block';
-          loadUsers();
-        }
-
-        function showTab(tabName) {
-          document.getElementById('dashboard-tab').style.display = tabName === 'dashboard' ? 'block' : 'none';
-          document.getElementById('users-tab').style.display = tabName === 'users' ? 'block' : 'none';
-          if (tabName === 'dashboard') loadData();
-          else loadUsers();
         }
 
         const socket = io();
@@ -198,7 +204,7 @@ app.get('/dashboard', (req, res) => {
           setTimeout(function(){ x.className = x.className.replace("show", ""); }, 3000);
         }
 
-        async function uploadFile(inputElement) {
+        async function handleFileUpload(inputElement) {
           const file = inputElement.files[0];
           if (!file) return;
           const formData = new FormData();
@@ -224,22 +230,6 @@ app.get('/dashboard', (req, res) => {
           }
         }
 
-        async function loadDemo() {
-          if(!confirm("Load 3 sample assemblies?")) return;
-          try {
-            const res = await fetch('/api/load-demo', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
-            const data = await res.json();
-            if(data.success) {
-              alert("✅ Loaded " + data.count + " demo assemblies!");
-              location.reload();
-            } else {
-              alert("Error: " + data.error);
-            }
-          } catch(e) {
-            alert("Network error");
-          }
-        }
-
         async function loadData() {
           try {
             const res = await fetch('/api/assemblies', { headers: { 'Authorization': 'Bearer ' + token } });
@@ -250,7 +240,7 @@ app.get('/dashboard', (req, res) => {
             document.getElementById('done').innerText = data.filter(a => a.percentComplete >= 100).length;
             document.getElementById('prog').innerText = data.filter(a => a.percentComplete > 0 && a.percentComplete < 100).length;
             if (data.length === 0) {
-              document.getElementById('content').innerHTML = '<p style="text-align:center; color:#666;">No assemblies found. Click "Load Demo" to start.</p>';
+              document.getElementById('content').innerHTML = '<p style="text-align:center; color:#666;">No assemblies found. Upload an Excel file to start.</p>';
               return;
             }
             let html = '<table><thead><tr><th>Assembly #</th><th>Name</th><th>Qty</th><th>%</th><th>Status</th></tr></thead><tbody>';
@@ -263,65 +253,6 @@ app.get('/dashboard', (req, res) => {
             document.getElementById('content').innerHTML = html;
           } catch (err) {
             document.getElementById('content').innerHTML = '<p style="color:red; text-align:center;">Error loading data.</p>';
-          }
-        }
-
-        async function loadUsers() {
-          try {
-            const res = await fetch('/api/users', { headers: { 'Authorization': 'Bearer ' + token } });
-            const users = await res.json();
-            const list = document.getElementById('user-list');
-            if (users.length === 0) { list.innerHTML = '<p>No users found.</p>'; return; }
-            let html = '';
-            users.forEach(u => {
-              html += '<div style="display:flex; justify-content:space-between; padding:10px; border-bottom:1px solid #eee;"><div><strong>' + u.username + '</strong><br><small>' + u.role + '</small></div>';
-              if (u.username !== 'admin') {
-                html += '<button style="background:#ff5252; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;" onclick="deleteUser(\'' + u.username + '\')">Delete</button>';
-              } else {
-                html += '<span style="color:#aaa; font-size:12px;">(Super Admin)</span>';
-              }
-              html += '</div>';
-            });
-            list.innerHTML = html;
-          } catch (err) {
-            document.getElementById('user-list').innerHTML = '<p style="color:red;">Error loading users.</p>';
-          }
-        }
-
-        async function createUser() {
-          const u = document.getElementById('new-u').value;
-          const p = document.getElementById('new-p').value;
-          const r = document.getElementById('new-r').value;
-          if (!u || !p) { alert("Please fill username and password"); return; }
-          try {
-            const res = await fetch('/api/users/create', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p, role: r }) });
-            const data = await res.json();
-            if (data.success) {
-              alert("User created!");
-              document.getElementById('new-u').value = '';
-              document.getElementById('new-p').value = '';
-              loadUsers();
-            } else {
-              alert("Error: " + data.error);
-            }
-          } catch (e) {
-            alert("Network error.");
-          }
-        }
-
-        async function deleteUser(username) {
-          if(!confirm("Delete user " + username + "?")) return;
-          try {
-            const res = await fetch('/api/users/delete', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username }) });
-            const data = await res.json();
-            if (data.success) {
-              alert("User deleted!");
-              loadUsers();
-            } else {
-              alert("Error: " + data.error);
-            }
-          } catch (e) {
-            alert("Network error.");
           }
         }
 
@@ -345,19 +276,6 @@ app.post('/api/auth/login', async (req, res) => {
 // API: Get Assemblies
 app.get('/api/assemblies', authenticate, (req, res) => {
   Assembly.findAll().then(assemblies => res.json(assemblies));
-});
-
-// API: Load Demo Data (Admin Only)
-app.post('/api/load-demo', authenticate, requireAdmin, async (req, res) => {
-  const samples = [
-    { assemblyNumber: 'GP-1249-00SB', assemblyName: 'Stopper Pin Assembly', qtyRequired: 5, percentComplete: 0, status: 'In Progress' },
-    { assemblyNumber: 'T310-ST-20-32_00_000SB', assemblyName: 'Trolley Assembly', qtyRequired: 4, percentComplete: 68, status: 'In Progress' },
-    { assemblyNumber: 'T310-ST-20-04_00_000SB-L7', assemblyName: 'Frame Assembly', qtyRequired: 2, percentComplete: 100, status: 'Complete' }
-  ];
-  let count = 0;
-  for (const asm of samples) { await Assembly.upsert(asm); count++; }
-  io.emit('data_updated', { count });
-  res.json({ success: true, count, message: "Loaded " + count + " demo assemblies." });
 });
 
 // API: Import Excel (Admin Only)
@@ -384,41 +302,6 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
   }
 });
 
-// API: Users (Get)
-app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
-  const users = await User.findAll({ attributes: ['username', 'role'] });
-  res.json(users);
-});
-
-// API: Users (Create)
-app.post('/api/users/create', authenticate, requireAdmin, async (req, res) => {
-  const { username, password, role } = req.body;
-  if (!username || !password) return res.status(400).json({ error: "Username and password required" });
-  try {
-    const existing = await User.findOne({ where: { username } });
-    if (existing) return res.status(400).json({ error: "Username already exists" });
-    const hash = await bcrypt.hash(password, 10);
-    await User.create({ username, passwordHash: hash, role: role || 'viewer' });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "Failed to create user" });
-  }
-});
-
-// API: Users (Delete)
-app.post('/api/users/delete', authenticate, requireAdmin, async (req, res) => {
-  const { username } = req.body;
-  if (username === 'admin') return res.status(403).json({ error: "Cannot delete super admin" });
-  try {
-    const user = await User.findOne({ where: { username } });
-    if (!user) return res.status(404).json({ error: "User not found" });
-    await user.destroy();
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "Failed to delete user" });
-  }
-});
-
 const PORT = process.env.PORT || 3001;
 async function start() {
   try {
@@ -435,5 +318,3 @@ async function start() {
   }
 }
 start();
-
-"// FORCED REDEPLOY - NEW VERSION 2.0" 
