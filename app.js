@@ -12,26 +12,18 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE'] } });
 
-// Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Multer Setup
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Database Setup
-const sequelize = new Sequelize({
-  dialect: 'sqlite',
-  storage: './ct20_data.db',
-  logging: false
-});
+const sequelize = new Sequelize({ dialect: 'sqlite', storage: './ct20_data.db', logging: false });
 
-// Models
 const User = sequelize.define('User', {
   username: { type: DataTypes.STRING, unique: true },
   passwordHash: DataTypes.STRING,
-  role: { type: DataTypes.STRING, defaultValue: 'viewer' } // 'admin' or 'viewer'
+  role: { type: DataTypes.STRING, defaultValue: 'viewer' }
 });
 
 const Assembly = sequelize.define('Assembly', {
@@ -44,22 +36,20 @@ const Assembly = sequelize.define('Assembly', {
 
 const JWT_SECRET = 'super-secret-key-change-in-production';
 
-// Initialize DB
 async function initDB() {
   await sequelize.sync();
   const count = await User.count();
   if (count === 0) {
     const hash = await bcrypt.hash('admin123', 10);
     await User.create({ username: 'admin', passwordHash: hash, role: 'admin' });
-    console.log('Default Admin created: admin / admin123');
+    console.log('Admin created: admin / admin123');
   }
 }
 
-// Middleware
 function authenticate(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' });
-  const token = authHeader.split(' ')[1];
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' });
+  const token = auth.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
@@ -72,70 +62,12 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// --- ROUTES ---
-
-// 1. Login Page
+// --- LOGIN PAGE ---
 app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>CT20 Login</title>
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 350px; text-align: center; }
-        h1 { color: #6d4aff; margin-bottom: 1.5rem; font-size: 1.5rem; }
-        input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-        button { width: 100%; padding: 12px; background: #6d4aff; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: background 0.2s; }
-        button:hover { background: #5a42d6; }
-        .error { color: #d32f2f; margin-top: 10px; font-size: 14px; display: none; }
-        .loader { display: none; color: #666; margin-top: 10px; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h1>🏭 CT20 Tracker</h1>
-        <input type="text" id="username" placeholder="Username" autocomplete="off">
-        <input type="password" id="password" placeholder="Password">
-        <button onclick="handleLogin()">Login</button>
-        <div id="error" class="error"></div>
-        <div id="loader" class="loader">Logging in...</div>
-      </div>
-      <script>
-        async function handleLogin() {
-          const u = document.getElementById('username').value;
-          const p = document.getElementById('password').value;
-          const err = document.getElementById('error');
-          const loader = document.getElementById('loader');
-          if(!u || !p) { err.innerText = "Please fill all fields"; err.style.display = 'block'; return; }
-          err.style.display = 'none';
-          loader.style.display = 'block';
-          try {
-            const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
-            const data = await res.json();
-            if (data.token) {
-              localStorage.setItem('ct20_token', data.token);
-              localStorage.setItem('ct20_role', data.user.role);
-              localStorage.setItem('ct20_user', data.user.username);
-              window.location.href = '/dashboard';
-            } else {
-              err.innerText = data.error || "Login failed";
-              err.style.display = 'block';
-            }
-          } catch (e) {
-            err.innerText = "Network error.";
-            err.style.display = 'block';
-          } finally { loader.style.display = 'none'; }
-        }
-      </script>
-    </body>
-    </html>
-  `);
+  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Login</title><style>body{font-family:sans-serif;background:#f0f2f5;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}.card{background:white;padding:2rem;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1);width:100%;max-width:350px;text-align:center}h1{color:#6d4aff}input{width:100%;padding:12px;margin:8px 0;border:1px solid #ddd;border-radius:6px;box-sizing:border-box}button{width:100%;padding:12px;background:#6d4aff;color:white;border:none;border-radius:6px;font-size:16px;font-weight:bold;cursor:pointer}button:hover{background:#5a42d6}</style></head><body><div class="card"><h1>🏭 CT20 Tracker</h1><input type="text" id="u" placeholder="Username"><input type="password" id="p" placeholder="Password"><button onclick="login()">Login</button><div id="msg" style="color:red;margin-top:10px;font-size:14px;"></div></div><script>async function login(){var u=document.getElementById("u").value;var p=document.getElementById("p").value;var m=document.getElementById("msg");if(!u||!p){m.innerText="Fill all fields";return;}fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})}).then(r=>r.json()).then(d=>{if(d.token){localStorage.setItem("ct20_token",d.token);localStorage.setItem("ct20_role",d.user.role);window.location.href="/dashboard";}else{m.innerText=d.error;}}).catch(e=>{m.innerText="Network Error";});}<\/script></body></html>');
 });
 
-// 2. Main Dashboard (Includes Users Tab for Admins)
+// --- DASHBOARD PAGE ---
 app.get('/dashboard', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -150,10 +82,11 @@ app.get('/dashboard', (req, res) => {
         .container { max-width: 800px; margin: 0 auto; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
         h1 { color: #333; margin: 0; font-size: 1.5rem; }
-        .nav-btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; background: #eee; color: #333; margin-right: 5px; }
-        .nav-btn.active { background: #6d4aff; color: white; }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; margin-left: 5px; }
         .btn-logout { background: #d32f2f; color: white; }
+        .btn-users { background: #6d4aff; color: white; }
         .btn-upload { background: #4caf50; color: white; }
+        .btn-demo { background: #2196f3; color: white; }
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px; }
         .stat-card { background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #6d4aff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .stat-val { font-size: 1.5rem; font-weight: bold; color: #333; }
@@ -171,16 +104,10 @@ app.get('/dashboard', (req, res) => {
         .progress-fill { height: 100%; background: #6d4aff; }
         .loading { text-align: center; padding: 40px; color: #666; }
         .role-badge { font-size: 12px; background: #eee; padding: 2px 6px; border-radius: 4px; margin-left: 10px; }
-        #toast { visibility: hidden; min-width: 250px; margin-left: -125px; background-color: #333; color: #fff; text-align: center; border-radius: 8px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; font-size: 17px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        #toast { visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center; border-radius: 8px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; font-size: 17px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
         #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
         @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
         @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
-        
-        /* User Table Styles */
-        .user-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
-        .user-info { display: flex; flex-direction: column; }
-        .user-role { font-size: 12px; color: #666; }
-        .delete-btn { background: #ff5252; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
       </style>
     </head>
     <body>
@@ -192,8 +119,10 @@ app.get('/dashboard', (req, res) => {
             <span id="user-role" class="role-badge"></span>
           </div>
           <div>
-            <button class="nav-btn active" onclick="showTab('dashboard')">Dashboard</button>
-            <button class="nav-btn" id="users-tab-btn" style="display:none;" onclick="showTab('users')">Users</button>
+            <button class="btn btn-users" id="users-btn" style="display:none" onclick="showTab('users')">Users</button>
+            <button class="btn btn-upload" id="upload-btn" style="display:none" onclick="document.getElementById('file-input').click()">📤 Upload Excel</button>
+            <button class="btn btn-demo" id="demo-btn" style="display:none" onclick="loadDemo()">📥 Load Demo</button>
+            <input type="file" id="file-input" style="display:none" accept=".xlsx, .xls" onchange="uploadFile(this)">
             <button class="btn btn-logout" onclick="logout()">Logout</button>
           </div>
         </div>
@@ -205,29 +134,24 @@ app.get('/dashboard', (req, res) => {
             <div class="stat-card"><div class="stat-val" id="done" style="color: green;">-</div><div class="stat-label">Completed</div></div>
             <div class="stat-card"><div class="stat-val" id="prog" style="color: orange;">-</div><div class="stat-label">In Progress</div></div>
           </div>
-
           <div class="card">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-              <h3>Assembly List</h3>
-              <label for="excel-upload" class="btn btn-upload" id="upload-btn" style="display:none; cursor: pointer; padding: 8px 16px;">📤 Upload Excel</label>
-              <input type="file" id="excel-upload" accept=".xlsx, .xls" style="display: none;" onchange="handleFileUpload(this)">
-            </div>
+            <h3>Assembly List</h3>
             <div id="content"><div class="loading">Loading data...</div></div>
           </div>
         </div>
 
-        <!-- USERS TAB (Admin Only) -->
+        <!-- USERS TAB -->
         <div id="users-tab" style="display:none;">
           <div class="card">
             <h3>Create New User</h3>
-            <div style="display:flex; gap:10px; margin-bottom:20px;">
-              <input type="text" id="new-user" placeholder="Username" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:6px;">
-              <input type="text" id="new-pass" placeholder="Password" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:6px;">
-              <select id="new-role" style="padding:10px; border:1px solid #ddd; border-radius:6px;">
+            <div style="display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap;">
+              <input type="text" id="new-u" placeholder="Username" style="flex:1; min-width:120px; padding:10px; border:1px solid #ddd; border-radius:6px;">
+              <input type="text" id="new-p" placeholder="Password" style="flex:1; min-width:120px; padding:10px; border:1px solid #ddd; border-radius:6px;">
+              <select id="new-r" style="padding:10px; border:1px solid #ddd; border-radius:6px;">
                 <option value="viewer">Viewer</option>
                 <option value="admin">Admin</option>
               </select>
-              <button class="btn" style="background:#6d4aff; color:white;" onclick="createUser()">Add</button>
+              <button class="btn btn-users" onclick="createUser()">Add</button>
             </div>
             <h3>Existing Users</h3>
             <div id="user-list">Loading...</div>
@@ -240,35 +164,27 @@ app.get('/dashboard', (req, res) => {
       <script>
         const token = localStorage.getItem('ct20_token');
         const role = localStorage.getItem('ct20_role');
-        const username = localStorage.getItem('ct20_user');
+        const username = localStorage.getItem('ct20_user') || 'User';
         
         if (!token) { window.location.href = '/'; }
 
         document.getElementById('user-display').innerText = 'Logged in as: ' + username;
         document.getElementById('user-role').innerText = role.toUpperCase();
 
-        // Show Users tab only for Admins
         if (role === 'admin') {
-          document.getElementById('users-tab-btn').style.display = 'inline-block';
+          document.getElementById('users-btn').style.display = 'inline-block';
           document.getElementById('upload-btn').style.display = 'inline-block';
+          document.getElementById('demo-btn').style.display = 'inline-block';
           loadUsers();
         }
 
         function showTab(tabName) {
-          document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-          event.target.classList.add('active');
-          if (tabName === 'dashboard') {
-            document.getElementById('dashboard-tab').style.display = 'block';
-            document.getElementById('users-tab').style.display = 'none';
-            loadData();
-          } else {
-            document.getElementById('dashboard-tab').style.display = 'none';
-            document.getElementById('users-tab').style.display = 'block';
-            loadUsers();
-          }
+          document.getElementById('dashboard-tab').style.display = tabName === 'dashboard' ? 'block' : 'none';
+          document.getElementById('users-tab').style.display = tabName === 'users' ? 'block' : 'none';
+          if (tabName === 'dashboard') loadData();
+          else loadUsers();
         }
 
-        // --- DASHBOARD FUNCTIONS ---
         const socket = io();
         socket.on('data_updated', (data) => {
           showToast('✨ New data received! (' + data.count + ' items)');
@@ -282,7 +198,7 @@ app.get('/dashboard', (req, res) => {
           setTimeout(function(){ x.className = x.className.replace("show", ""); }, 3000);
         }
 
-        async function handleFileUpload(inputElement) {
+        async function uploadFile(inputElement) {
           const file = inputElement.files[0];
           if (!file) return;
           const formData = new FormData();
@@ -308,6 +224,22 @@ app.get('/dashboard', (req, res) => {
           }
         }
 
+        async function loadDemo() {
+          if(!confirm("Load 3 sample assemblies?")) return;
+          try {
+            const res = await fetch('/api/load-demo', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await res.json();
+            if(data.success) {
+              alert("✅ Loaded " + data.count + " demo assemblies!");
+              location.reload();
+            } else {
+              alert("Error: " + data.error);
+            }
+          } catch(e) {
+            alert("Network error");
+          }
+        }
+
         async function loadData() {
           try {
             const res = await fetch('/api/assemblies', { headers: { 'Authorization': 'Bearer ' + token } });
@@ -318,7 +250,7 @@ app.get('/dashboard', (req, res) => {
             document.getElementById('done').innerText = data.filter(a => a.percentComplete >= 100).length;
             document.getElementById('prog').innerText = data.filter(a => a.percentComplete > 0 && a.percentComplete < 100).length;
             if (data.length === 0) {
-              document.getElementById('content').innerHTML = '<p style="text-align:center; color:#666;">No assemblies found.</p>';
+              document.getElementById('content').innerHTML = '<p style="text-align:center; color:#666;">No assemblies found. Click "Load Demo" to start.</p>';
               return;
             }
             let html = '<table><thead><tr><th>Assembly #</th><th>Name</th><th>Qty</th><th>%</th><th>Status</th></tr></thead><tbody>';
@@ -334,21 +266,17 @@ app.get('/dashboard', (req, res) => {
           }
         }
 
-        // --- USER MANAGEMENT FUNCTIONS ---
         async function loadUsers() {
           try {
             const res = await fetch('/api/users', { headers: { 'Authorization': 'Bearer ' + token } });
             const users = await res.json();
             const list = document.getElementById('user-list');
-            if (users.length === 0) {
-              list.innerHTML = '<p>No users found.</p>';
-              return;
-            }
+            if (users.length === 0) { list.innerHTML = '<p>No users found.</p>'; return; }
             let html = '';
             users.forEach(u => {
-              html += '<div class="user-row"><div class="user-info"><strong>' + u.username + '</strong><span class="user-role">' + u.role + '</span></div>';
+              html += '<div style="display:flex; justify-content:space-between; padding:10px; border-bottom:1px solid #eee;"><div><strong>' + u.username + '</strong><br><small>' + u.role + '</small></div>';
               if (u.username !== 'admin') {
-                html += '<button class="delete-btn" onclick="deleteUser(\'' + u.username + '\')">Delete</button>';
+                html += '<button style="background:#ff5252; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;" onclick="deleteUser(\'' + u.username + '\')">Delete</button>';
               } else {
                 html += '<span style="color:#aaa; font-size:12px;">(Super Admin)</span>';
               }
@@ -361,22 +289,17 @@ app.get('/dashboard', (req, res) => {
         }
 
         async function createUser() {
-          const u = document.getElementById('new-user').value;
-          const p = document.getElementById('new-pass').value;
-          const r = document.getElementById('new-role').value;
+          const u = document.getElementById('new-u').value;
+          const p = document.getElementById('new-p').value;
+          const r = document.getElementById('new-r').value;
           if (!u || !p) { alert("Please fill username and password"); return; }
-          
           try {
-            const res = await fetch('/api/users/create', {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ username: u, password: p, role: r })
-            });
+            const res = await fetch('/api/users/create', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p, role: r }) });
             const data = await res.json();
             if (data.success) {
               alert("User created!");
-              document.getElementById('new-user').value = '';
-              document.getElementById('new-pass').value = '';
+              document.getElementById('new-u').value = '';
+              document.getElementById('new-p').value = '';
               loadUsers();
             } else {
               alert("Error: " + data.error);
@@ -389,11 +312,7 @@ app.get('/dashboard', (req, res) => {
         async function deleteUser(username) {
           if(!confirm("Delete user " + username + "?")) return;
           try {
-            const res = await fetch('/api/users/delete', {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ username: username })
-            });
+            const res = await fetch('/api/users/delete', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username }) });
             const data = await res.json();
             if (data.success) {
               alert("User deleted!");
@@ -407,8 +326,6 @@ app.get('/dashboard', (req, res) => {
         }
 
         function logout() { localStorage.clear(); window.location.href = '/'; }
-        
-        // Load initial data
         loadData();
       </script>
     </body>
@@ -430,6 +347,19 @@ app.get('/api/assemblies', authenticate, (req, res) => {
   Assembly.findAll().then(assemblies => res.json(assemblies));
 });
 
+// API: Load Demo Data (Admin Only)
+app.post('/api/load-demo', authenticate, requireAdmin, async (req, res) => {
+  const samples = [
+    { assemblyNumber: 'GP-1249-00SB', assemblyName: 'Stopper Pin Assembly', qtyRequired: 5, percentComplete: 0, status: 'In Progress' },
+    { assemblyNumber: 'T310-ST-20-32_00_000SB', assemblyName: 'Trolley Assembly', qtyRequired: 4, percentComplete: 68, status: 'In Progress' },
+    { assemblyNumber: 'T310-ST-20-04_00_000SB-L7', assemblyName: 'Frame Assembly', qtyRequired: 2, percentComplete: 100, status: 'Complete' }
+  ];
+  let count = 0;
+  for (const asm of samples) { await Assembly.upsert(asm); count++; }
+  io.emit('data_updated', { count });
+  res.json({ success: true, count, message: "Loaded " + count + " demo assemblies." });
+});
+
 // API: Import Excel (Admin Only)
 app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -437,7 +367,6 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
     if (!sheetData.length) return res.status(400).json({ error: "Excel file is empty" });
-    
     const assembliesToSave = sheetData.map((row, index) => ({
       assemblyNumber: row['Assembly Number'] || row['assemblyNumber'] || 'AUTO-' + Date.now() + '-' + index,
       assemblyName: row['Assembly Name'] || row['assemblyName'] || 'Unknown',
@@ -445,11 +374,9 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
       percentComplete: parseFloat(row['Percent'] || row['percentComplete'] || 0),
       status: row['Status'] || row['status'] || 'Pending'
     }));
-
     let count = 0;
     for (const asm of assembliesToSave) { await Assembly.upsert(asm); count++; }
-    
-    io.emit('data_updated', { count }); 
+    io.emit('data_updated', { count });
     res.json({ success: true, count, message: "Imported " + count + " assemblies." });
   } catch (err) {
     console.error(err);
@@ -457,23 +384,19 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
   }
 });
 
-// --- NEW: USER MANAGEMENT API ---
-
-// Get all users (Admin Only)
+// API: Users (Get)
 app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
   const users = await User.findAll({ attributes: ['username', 'role'] });
   res.json(users);
 });
 
-// Create user (Admin Only)
+// API: Users (Create)
 app.post('/api/users/create', authenticate, requireAdmin, async (req, res) => {
   const { username, password, role } = req.body;
   if (!username || !password) return res.status(400).json({ error: "Username and password required" });
-  
   try {
     const existing = await User.findOne({ where: { username } });
     if (existing) return res.status(400).json({ error: "Username already exists" });
-    
     const hash = await bcrypt.hash(password, 10);
     await User.create({ username, passwordHash: hash, role: role || 'viewer' });
     res.json({ success: true });
@@ -482,15 +405,13 @@ app.post('/api/users/create', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-// Delete user (Admin Only)
+// API: Users (Delete)
 app.post('/api/users/delete', authenticate, requireAdmin, async (req, res) => {
   const { username } = req.body;
   if (username === 'admin') return res.status(403).json({ error: "Cannot delete super admin" });
-  
   try {
     const user = await User.findOne({ where: { username } });
     if (!user) return res.status(404).json({ error: "User not found" });
-    
     await user.destroy();
     res.json({ success: true });
   } catch (err) {
@@ -498,9 +419,7 @@ app.post('/api/users/delete', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-// Start Server
 const PORT = process.env.PORT || 3001;
-
 async function start() {
   try {
     await initDB();
@@ -515,5 +434,6 @@ async function start() {
     process.exit(1);
   }
 }
-
 start();
+
+"// FORCED REDEPLOY - NEW VERSION 2.0" 
