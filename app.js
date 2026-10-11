@@ -15,15 +15,13 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"], credentials: true } 
 });
 
-// Middleware
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use(express.static('public')); // Serve static files from 'public' folder
+app.use(express.static('public'));
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Database Setup
 const sequelize = new Sequelize({ 
   dialect: 'sqlite', 
   storage: './ct20_data.db', 
@@ -46,7 +44,6 @@ const Assembly = sequelize.define('Assembly', {
 
 const JWT_SECRET = 'super-secret-key-change-in-production';
 
-// Initialize DB & Create Admin
 async function initDB() {
   try {
     await sequelize.sync({ force: false });
@@ -55,8 +52,6 @@ async function initDB() {
       const hash = await bcrypt.hash('admin123', 10);
       await User.create({ username: 'admin', passwordHash: hash, role: 'admin' });
       console.log('✅ Default Admin Created: admin / admin123');
-    } else {
-      console.log('ℹ️ Users already exist.');
     }
   } catch (err) {
     console.error('❌ DB Init Error:', err);
@@ -79,7 +74,6 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Routes to serve HTML files
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -111,8 +105,41 @@ app.get('/api/assemblies', authenticate, (req, res) => {
   });
 });
 
-// API: Update Part (Status or %)
-app.post('/api/update-part', authenticate, requireAdmin, async (req, res) => {
+// NEW: Batch Update (for Qty Comp -> % Calc)
+app.post('/api/update-part-batch', authenticate, async (req, res) => {
+  const { partNumber, qtyCompleted, percentComplete } = req.body;
+  if (!partNumber) return res.status(400).json({ error: 'Missing partNumber' });
+  
+  try {
+    const assembly = await Assembly.findByPk(partNumber);
+    if (!assembly) return res.status(404).json({ error: 'Part not found' });
+    
+    if (qtyCompleted !== undefined) {
+      assembly.qtyCompleted = qtyCompleted; // Optional: Store if you want, but we calc % from it
+      // Note: Our model doesn't have qtyCompleted field, we derive it. 
+      // So we just use it to set %.
+    }
+    
+    if (percentComplete !== undefined) {
+      assembly.percentComplete = percentComplete;
+      
+      // Auto-update status
+      if (percentComplete >= 100) assembly.status = 'Complete';
+      else if (percentComplete > 0) assembly.status = 'In Progress';
+      else if (assembly.status === 'Complete') assembly.status = 'In Progress';
+    }
+    
+    await assembly.save();
+    io.emit('data_updated', {});
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Batch Update Error:', err);
+    res.status(500).json({ error: 'Failed to update' });
+  }
+});
+
+// API: Update Part (Single Field - Status or %)
+app.post('/api/update-part', authenticate, (req, res) => {
   const { partNumber, field, value } = req.body;
   if (!partNumber || !field) return res.status(400).json({ error: 'Missing data' });
   try {
@@ -123,12 +150,9 @@ app.post('/api/update-part', authenticate, requireAdmin, async (req, res) => {
       const numVal = parseFloat(value);
       if (isNaN(numVal) || numVal < 0 || numVal > 100) return res.status(400).json({ error: 'Invalid percentage' });
       assembly.percentComplete = numVal;
-      
-      // Auto-update status if needed
-      if (numVal === 100) assembly.status = 'Complete';
+      if (numVal >= 100) assembly.status = 'Complete';
       else if (numVal > 0) assembly.status = 'In Progress';
       else if (assembly.status === 'Complete') assembly.status = 'In Progress';
-      
     } else if (field === 'status') {
       assembly.status = value;
     }
@@ -148,8 +172,6 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
   try {
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
-    
-    // Find header row (looking for 'Drawing Number' in column E/index 4)
     let headerRowIndex = -1;
     for(let i=0; i<Math.min(sheetData.length, 10); i++) {
       if(sheetData[i] && sheetData[i][4] === 'Drawing Number') {
@@ -157,22 +179,16 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
         break;
       }
     }
-    
-    if(headerRowIndex === -1) return res.status(400).json({ error: "Could not find 'Drawing Number' header. Ensure Excel format matches." });
-    
+    if(headerRowIndex === -1) return res.status(400).json({ error: "Could not find 'Drawing Number' header." });
     const dataRows = sheetData.slice(headerRowIndex + 1);
     const assembliesToSave = [];
-    
     dataRows.forEach(row => {
-      // Map columns: E=4(Drawing), F=5(Name), G=6(Qty), K=10(%), L=11(Status)
       const drawingNum = row[4];
       const name = row[5];
       const qty = row[6];
       const pct = row[10];
       const stat = row[11];
-      
-      if (!drawingNum || !name) return; // Skip empty rows
-      
+      if (!drawingNum || !name) return;
       assembliesToSave.push({
         partNumber: String(drawingNum).trim(),
         description: String(name).trim(),
@@ -181,18 +197,46 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
         status: String(stat || 'Pending').trim()
       });
     });
-    
     let count = 0;
-    for (const asm of assembliesToSave) { 
-      await Assembly.upsert(asm); 
-      count++; 
-    }
-    
+    for (const asm of assembliesToSave) { await Assembly.upsert(asm); count++; }
     io.emit('data_updated', { count });
     res.json({ success: true, count, message: "Imported " + count + " parts." });
   } catch (err) {
     console.error('Import Error:', err);
-    res.status(500).json({ error: "Failed to parse file. Check headers." });
+    res.status(500).json({ error: "Failed to parse file." });
+  }
+});
+
+// API: Users (Get, Create, Delete)
+app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
+  const users = await User.findAll({ attributes: ['username', 'role'] });
+  res.json(users);
+});
+
+app.post('/api/users/create', authenticate, requireAdmin, async (req, res) => {
+  const { username, password, role } = req.body;
+  if (!username || !password) return res.status(400).json({ error: "Username and password required" });
+  try {
+    const existing = await User.findOne({ where: { username } });
+    if (existing) return res.status(400).json({ error: "Username already exists" });
+    const hash = await bcrypt.hash(password, 10);
+    await User.create({ username, passwordHash: hash, role: role || 'viewer' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+app.post('/api/users/delete', authenticate, requireAdmin, async (req, res) => {
+  const { username } = req.body;
+  if (username === 'admin') return res.status(403).json({ error: "Cannot delete super admin" });
+  try {
+    const user = await User.findOne({ where: { username } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    await user.destroy();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete user" });
   }
 });
 
