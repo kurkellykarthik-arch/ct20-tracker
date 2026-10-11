@@ -398,12 +398,16 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
 // Start Server
 async function start() {
   await initDB();
-  server.listen(3001, '0.0.0.0', () => {
-    console.log('\n========================================');
-    console.log('  🚀 CT20 Assembly Tracker - LIVE!');
-    console.log('  🌐 http://localhost:3001');
-    console.log('  👤 User: admin | Pass: admin123 (Role: Admin)');
-    console.log('========================================\n');
+  const PORT = process.env.PORT || 3001; // Use Railway's port or fallback to 3001
+
+async function start() {
+  await initDB();
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n========================================`);
+    console.log(`  🚀 CT20 Assembly Tracker - LIVE!`);
+    console.log(`  🌐 Listening on port ${PORT}`);
+    console.log(`  👤 User: admin | Pass: admin123`);
+    console.log(`========================================\n`);
   });
 }
 
