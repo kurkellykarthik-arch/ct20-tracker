@@ -105,7 +105,7 @@ app.get('/api/assemblies', authenticate, (req, res) => {
   });
 });
 
-// NEW: Batch Update (for Qty Comp -> % Calc)
+// FIXED: Batch Update (Removed invalid field assignment)
 app.post('/api/update-part-batch', authenticate, async (req, res) => {
   const { partNumber, qtyCompleted, percentComplete } = req.body;
   if (!partNumber) return res.status(400).json({ error: 'Missing partNumber' });
@@ -114,12 +114,8 @@ app.post('/api/update-part-batch', authenticate, async (req, res) => {
     const assembly = await Assembly.findByPk(partNumber);
     if (!assembly) return res.status(404).json({ error: 'Part not found' });
     
-    if (qtyCompleted !== undefined) {
-      assembly.qtyCompleted = qtyCompleted; // Optional: Store if you want, but we calc % from it
-      // Note: Our model doesn't have qtyCompleted field, we derive it. 
-      // So we just use it to set %.
-    }
-    
+    // We only update percentComplete and status. 
+    // qtyCompleted is calculated on the fly in the UI, not stored in DB.
     if (percentComplete !== undefined) {
       assembly.percentComplete = percentComplete;
       
@@ -251,4 +247,3 @@ async function start() {
   });
 }
 start();
-
