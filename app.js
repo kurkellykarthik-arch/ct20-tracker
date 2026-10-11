@@ -52,7 +52,7 @@ async function initDB() {
   if (count === 0) {
     const hash = await bcrypt.hash('admin123', 10);
     await User.create({ username: 'admin', passwordHash: hash, role: 'admin' });
-    console.log('✅ Default Admin created: admin / admin123 (Role: admin)');
+    console.log('Default Admin created: admin / admin123');
   }
 }
 
@@ -152,10 +152,8 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 2. Dashboard Page
+// 2. Dashboard Page (With Real-Time Updates & Toasts)
 app.get('/dashboard', (req, res) => {
-  const token = req.headers.authorization ? req.headers.authorization.split(' ')[1] : null;
-  
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -163,6 +161,7 @@ app.get('/dashboard', (req, res) => {
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>CT20 Dashboard</title>
+      <script src="/socket.io/socket.io.js"><\/script>
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f9fa; margin: 0; padding: 20px; }
         .container { max-width: 800px; margin: 0 auto; }
@@ -188,6 +187,12 @@ app.get('/dashboard', (req, res) => {
         .progress-fill { height: 100%; background: #6d4aff; }
         .loading { text-align: center; padding: 40px; color: #666; }
         .role-badge { font-size: 12px; background: #eee; padding: 2px 6px; border-radius: 4px; margin-left: 10px; }
+        
+        /* Toast Styles */
+        #toast { visibility: hidden; min-width: 250px; margin-left: -125px; background-color: #333; color: #fff; text-align: center; border-radius: 8px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; font-size: 17px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+        @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+        @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
       </style>
     </head>
     <body>
@@ -198,12 +203,8 @@ app.get('/dashboard', (req, res) => {
             <span id="user-role" class="role-badge"></span>
           </div>
           <div>
-            <!-- Upload Button (Only visible to admins via JS check) -->
-            <label for="excel-upload" class="btn btn-upload" id="upload-btn" style="display:none; cursor: pointer;">
-              📤 Upload Excel
-            </label>
+            <label for="excel-upload" class="btn btn-upload" id="upload-btn" style="display:none; cursor: pointer;">📤 Upload Excel</label>
             <input type="file" id="excel-upload" accept=".xlsx, .xls" style="display: none;" onchange="handleFileUpload(this)">
-            
             <button class="btn btn-logout" onclick="logout()">Logout</button>
           </div>
         </div>
@@ -216,19 +217,18 @@ app.get('/dashboard', (req, res) => {
 
         <div class="card">
           <h3>Assembly List</h3>
-          <div id="content">
-            <div class="loading">Loading data...</div>
-          </div>
+          <div id="content"><div class="loading">Loading data...</div></div>
         </div>
       </div>
+
+      <!-- Toast Element -->
+      <div id="toast">✨ New data uploaded!</div>
 
       <script>
         const token = localStorage.getItem('ct20_token');
         const role = localStorage.getItem('ct20_role');
-        
         if (!token) { window.location.href = '/'; }
 
-        // Show upload button only for admins
         if (role === 'admin') {
           document.getElementById('upload-btn').style.display = 'inline-block';
           document.getElementById('user-role').innerText = 'Admin';
@@ -236,33 +236,39 @@ app.get('/dashboard', (req, res) => {
           document.getElementById('user-role').innerText = 'Viewer';
         }
 
+        // Socket.IO Connection
+        const socket = io();
+        socket.on('data_updated', (data) => {
+          showToast('✨ New data received! (' + data.count + ' items)');
+          loadData(); // Auto-reload data
+        });
+
+        function showToast(message) {
+          var x = document.getElementById("toast");
+          x.innerText = message;
+          x.className = "show";
+          setTimeout(function(){ x.className = x.className.replace("show", ""); }, 3000);
+        }
+
         async function handleFileUpload(inputElement) {
           const file = inputElement.files[0];
           if (!file) return;
-
           const formData = new FormData();
           formData.append('file', file);
-          
           const btn = document.getElementById('upload-btn');
           btn.innerText = 'Uploading...';
           btn.disabled = true;
-
           try {
-            const res = await fetch('/api/import', {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + token },
-              body: formData
-            });
-
+            const res = await fetch('/api/import', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: formData });
             const data = await res.json();
             if (data.success) {
-              alert(\`✅ Success! Imported \${data.count} assemblies.\`);
+              alert('Success! Imported ' + data.count + ' assemblies.');
               location.reload();
             } else {
-              alert(\`❌ Error: \${data.error}\`);
+              alert('Error: ' + data.error);
             }
           } catch (e) {
-            alert("❌ Network error during upload.");
+            alert("Network error.");
           } finally {
             btn.innerText = '📤 Upload Excel';
             btn.disabled = false;
@@ -272,61 +278,31 @@ app.get('/dashboard', (req, res) => {
 
         async function loadData() {
           try {
-            const res = await fetch('/api/assemblies', {
-              headers: { 'Authorization': 'Bearer ' + token }
-            });
-            
-            if (res.status === 401) {
-              localStorage.removeItem('ct20_token');
-              localStorage.removeItem('ct20_role');
-              window.location.href = '/';
-              return;
-            }
-
+            const res = await fetch('/api/assemblies', { headers: { 'Authorization': 'Bearer ' + token } });
+            if (res.status === 401) { localStorage.clear(); window.location.href = '/'; return; }
             const data = await res.json();
             document.getElementById('content').innerHTML = '';
-            
-            // Stats
             document.getElementById('total').innerText = data.length;
             document.getElementById('done').innerText = data.filter(a => a.percentComplete >= 100).length;
             document.getElementById('prog').innerText = data.filter(a => a.percentComplete > 0 && a.percentComplete < 100).length;
-
             if (data.length === 0) {
-              document.getElementById('content').innerHTML = '<p style="text-align:center; color:#666;">No assemblies found. Admins can upload an Excel file.</p>';
+              document.getElementById('content').innerHTML = '<p style="text-align:center; color:#666;">No assemblies found.</p>';
               return;
             }
-
             let html = '<table><thead><tr><th>Assembly #</th><th>Name</th><th>Qty</th><th>%</th><th>Status</th></tr></thead><tbody>';
             data.forEach(a => {
               let badgeClass = a.percentComplete >= 100 ? 'status-ok' : (a.percentComplete > 0 ? 'status-warn' : 'status-bad');
               let badgeText = a.percentComplete >= 100 ? '✅ Done' : (a.percentComplete > 0 ? '🔄 Working' : '⏳ Pending');
-              
-              html += \`
-                <tr>
-                  <td style="font-family: monospace; font-size: 12px;">\${a.assemblyNumber}</td>
-                  <td>\${a.assemblyName}</td>
-                  <td>\${a.qtyRequired}</td>
-                  <td>
-                    <div class="progress-bar"><div class="progress-fill" style="width: \${Math.min(a.percentComplete, 100)}%"></div></div>
-                    <small>\${a.percentComplete}%</small>
-                  </td>
-                  <td><span class="status-badge \${badgeClass}">\${badgeText}</span></td>
-                </tr>
-              \`;
+              html += '<tr><td style="font-family: monospace; font-size: 12px;">' + a.assemblyNumber + '</td><td>' + a.assemblyName + '</td><td>' + a.qtyRequired + '</td><td><div class="progress-bar"><div class="progress-fill" style="width: ' + Math.min(a.percentComplete, 100) + '%"></div></div><small>' + a.percentComplete + '%</small></td><td><span class="status-badge ' + badgeClass + '">' + badgeText + '</span></td></tr>';
             });
             html += '</tbody></table>';
             document.getElementById('content').innerHTML = html;
           } catch (err) {
-            document.getElementById('content').innerHTML = '<p style="color:red; text-align:center;">Error loading data. Please check connection.</p>';
+            document.getElementById('content').innerHTML = '<p style="color:red; text-align:center;">Error loading data.</p>';
           }
         }
 
-        function logout() {
-          localStorage.removeItem('ct20_token');
-          localStorage.removeItem('ct20_role');
-          window.location.href = '/';
-        }
-
+        function logout() { localStorage.clear(); window.location.href = '/'; }
         loadData();
       </script>
     </body>
@@ -338,11 +314,7 @@ app.get('/dashboard', (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   const user = await User.findOne({ where: { username } });
-  
-  if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-  
+  if (!user || !(await bcrypt.compare(password, user.passwordHash))) return res.status(401).json({ error: 'Invalid credentials' });
   const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
   res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
 });
@@ -354,62 +326,48 @@ app.get('/api/assemblies', authenticate, (req, res) => {
 
 // API: Import Excel (Admin Only)
 app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "No file uploaded" });
-  }
-
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   try {
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+    if (!sheetData.length) return res.status(400).json({ error: "Excel file is empty" });
+    
+    const assembliesToSave = sheetData.map((row, index) => ({
+      assemblyNumber: row['Assembly Number'] || row['assemblyNumber'] || 'AUTO-' + Date.now() + '-' + index,
+      assemblyName: row['Assembly Name'] || row['assemblyName'] || 'Unknown',
+      qtyRequired: parseInt(row['Quantity'] || row['qtyRequired'] || 1),
+      percentComplete: parseFloat(row['Percent'] || row['percentComplete'] || 0),
+      status: row['Status'] || row['status'] || 'Pending'
+    }));
 
-    if (!sheetData.length) {
-      return res.status(400).json({ error: "Excel file is empty" });
-    }
-
-    // Map Excel columns to Database fields
-    // Expected Excel Headers: "Assembly Number", "Assembly Name", "Quantity", "Percent", "Status"
-    const assembliesToSave = sheetData.map((row, index) => {
-      return {
-        assemblyNumber: row['Assembly Number'] || row['assemblyNumber'] || `AUTO-${Date.now()}-${index}`,
-        assemblyName: row['Assembly Name'] || row['assemblyName'] || 'Unknown Assembly',
-        qtyRequired: parseInt(row['Quantity'] || row['qtyRequired'] || 1),
-        percentComplete: parseFloat(row['Percent'] || row['percentComplete'] || 0),
-        status: row['Status'] || row['status'] || 'Pending'
-      };
-    });
-
-    // Upsert (Update or Insert) each assembly
     let count = 0;
-    for (const asm of assembliesToSave) {
-      await Assembly.upsert(asm);
-      count++;
-    }
-
-    io.emit('data_updated', { count }); // Notify all connected clients
-    res.json({ success: true, count, message: \`Successfully imported \${count} assemblies.\` });
-
+    for (const asm of assembliesToSave) { await Assembly.upsert(asm); count++; }
+    
+    // FIXED LINE: Using simple string concatenation instead of template literals
+    io.emit('data_updated', { count }); 
+    res.json({ success: true, count, message: "Imported " + count + " assemblies." });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to parse Excel file. Check column headers." });
+    res.status(500).json({ error: "Failed to parse file." });
   }
 });
 
 // Start Server
-async function start() {
-  await initDB();
-  const PORT = process.env.PORT || 3001; // Use Railway's port or fallback to 3001
+const PORT = process.env.PORT || 3001;
 
 async function start() {
-  await initDB();
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n========================================`);
-    console.log(`  🚀 CT20 Assembly Tracker - LIVE!`);
-    console.log(`  🌐 Listening on port ${PORT}`);
-    console.log(`  👤 User: admin | Pass: admin123`);
-    console.log(`========================================\n`);
-  });
+  try {
+    await initDB();
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log('========================================');
+      console.log('  CT20 Assembly Tracker - LIVE!');
+      console.log('  Listening on port ' + PORT);
+      console.log('========================================');
+    });
+  } catch (err) {
+    console.error('Failed to start:', err);
+    process.exit(1);
+  }
 }
 
 start();
-
