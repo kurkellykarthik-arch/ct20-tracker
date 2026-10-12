@@ -46,20 +46,16 @@ const JWT_SECRET = 'super-secret-key-change-in-production';
 
 async function initDB() {
   try {
-    // FORCE TRUE: Drops and recreates tables to match the current model exactly
-    await sequelize.sync({ force: true }); 
-    
+    await sequelize.sync({ force: true });
     const count = await User.count();
     if (count === 0) {
       const hash = await bcrypt.hash('admin123', 10);
       await User.create({ username: 'admin', passwordHash: hash, role: 'admin' });
       console.log('✅ Default Admin Created: admin / admin123');
-    } else {
-      console.log('ℹ️ Users already exist.');
     }
   } catch (err) {
     console.error('❌ DB Init Error:', err);
-    throw err; // Throw error to stop server startup if DB fails
+    throw err;
   }
 }
 
@@ -87,7 +83,6 @@ app.get('/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-// API: Login
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
@@ -102,7 +97,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// API: Get Assemblies
 app.get('/api/assemblies', authenticate, (req, res) => {
   Assembly.findAll().then(assemblies => res.json(assemblies)).catch(err => {
     console.error('Fetch Error:', err);
@@ -110,32 +104,7 @@ app.get('/api/assemblies', authenticate, (req, res) => {
   });
 });
 
-// Batch Update (Qty Comp -> %)
-app.post('/api/update-part-batch', authenticate, async (req, res) => {
-  const { partNumber, qtyCompleted, percentComplete } = req.body;
-  if (!partNumber) return res.status(400).json({ error: 'Missing partNumber' });
-  
-  try {
-    const assembly = await Assembly.findByPk(partNumber);
-    if (!assembly) return res.status(404).json({ error: 'Part not found' });
-    
-    if (percentComplete !== undefined) {
-      assembly.percentComplete = percentComplete;
-      if (percentComplete >= 100) assembly.status = 'Complete';
-      else if (percentComplete > 0) assembly.status = 'In Progress';
-      else if (assembly.status === 'Complete') assembly.status = 'In Progress';
-    }
-    
-    await assembly.save();
-    io.emit('data_updated', {});
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Batch Update Error:', err);
-    res.status(500).json({ error: 'Failed to update' });
-  }
-});
-
-// Single Update
+// Simple Update (Only Percent and Status)
 app.post('/api/update-part', authenticate, (req, res) => {
   const { partNumber, field, value } = req.body;
   if (!partNumber || !field) return res.status(400).json({ error: 'Missing data' });
@@ -163,7 +132,6 @@ app.post('/api/update-part', authenticate, (req, res) => {
   }
 });
 
-// Import Excel
 app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   try {
@@ -204,7 +172,6 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
   }
 });
 
-// User APIs
 app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
   const users = await User.findAll({ attributes: ['username', 'role'] });
   res.json(users);

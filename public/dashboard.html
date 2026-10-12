@@ -45,7 +45,6 @@
       </div>
     </div>
 
-    <!-- DASHBOARD TAB -->
     <div id="dashboard-tab">
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-val" id="total">-</div><div class="stat-label">Total Parts</div></div>
@@ -58,7 +57,6 @@
       </div>
     </div>
 
-    <!-- USERS TAB (Admin Only) -->
     <div id="users-tab" style="display:none;">
       <div class="card">
         <h3>Create New User</h3>
@@ -82,10 +80,7 @@
   <script>
     var token = localStorage.getItem("ct20_token");
     var role = localStorage.getItem("ct20_role");
-    var username = localStorage.getItem("ct20_user") || "User";
-
     if (!token) { window.location.href = "/"; }
-
     document.getElementById("role-badge").innerText = role.toUpperCase();
 
     if (role === "admin") {
@@ -129,59 +124,8 @@
         .finally(function() { btn.innerText = "📤 Upload Excel"; btn.disabled = false; input.value = ""; });
     }
 
-    // UPDATED: Handle Qty Comp changes
+    // Simplified Update Function
     function updatePart(pn, fld, val) {
-      // If updating Qty Comp, calculate % first
-      if (fld === 'qtyCompleted') {
-        // Fetch current data to get Qty Required
-        // We need to find the row in the current data to get QtyReq
-        // But simpler: send both values to backend? 
-        // Better: Calculate here if we have the data in memory.
-        // Since we don't have easy access to row data here, we will send the new Qty and let the backend recalculate?
-        // No, let's do it client side if possible, but we need QtyReq.
-        // Let's just send the new Qty Completed, and the backend will recalculate %.
-        // Actually, let's just send the new value and let the frontend handle the UI update, but backend needs logic.
-        // Simpler approach: Send the new Qty Completed, and the backend calculates %.
-        // But the backend doesn't know QtyReq unless we store it or send it.
-        // Let's change strategy: When user types Qty Comp, we calculate % locally and update BOTH fields.
-        
-        // We need the QtyReq for this part. We can grab it from the DOM or re-fetch.
-        // Let's grab it from the DOM row.
-        var row = event.target.closest('tr');
-        var qtyReq = parseFloat(row.cells[2].innerText); // Column 3 is Qty Req
-        var newQtyComp = parseFloat(val);
-        
-        if (isNaN(newQtyComp) || newQtyComp < 0) return;
-        if (newQtyComp > qtyReq) {
-          alert("Completed Qty cannot exceed Required Qty (" + qtyReq + ")");
-          event.target.value = qtyReq;
-          return;
-        }
-
-        var newPercent = qtyReq > 0 ? (newQtyComp / qtyReq) * 100 : 0;
-        newPercent = Math.round(newPercent * 10) / 10; // Round to 1 decimal
-
-        // Update the % input visually immediately
-        var percentInput = row.cells[4].querySelector('input');
-        percentInput.value = newPercent;
-
-        // Now send BOTH updates to backend
-        fetch("/api/update-part-batch", {
-          method: "POST",
-          headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            partNumber: pn, 
-            qtyCompleted: newQtyComp, 
-            percentComplete: newPercent 
-          })
-        }).then(r => r.json()).then(d => {
-          if(d.success) { showToast("Saved!"); loadData(); }
-          else { alert("Error: " + d.error); loadData(); }
-        }).catch(e => { alert("Error"); loadData(); });
-        return; // Exit early as we handled it
-      }
-
-      // Standard update for Status or %
       fetch("/api/update-part", { method: "POST", headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify({ partNumber: pn, field: fld, value: val }) })
         .then(r => r.json())
         .then(d => {
@@ -213,10 +157,8 @@
             h += "<td style='font-family:monospace;font-size:12px'>" + a.partNumber + "</td>";
             h += "<td>" + a.description + "</td>";
             h += "<td>" + a.qtyRequired + "</td>";
-            
-            // EDITABLE Qty Comp
-            h += "<td class='editable-cell'><input type='number' min='0' max='" + a.qtyRequired + "' value='" + qc + "' onchange='updatePart(\"" + a.partNumber + "\",\"qtyCompleted\",this.value)'></td>";
-            
+            // Qty Comp is now READ ONLY (calculated display only)
+            h += "<td><strong>" + qc + "</strong></td>";
             h += "<td class='editable-cell'><input type='number' min='0' max='100' value='" + a.percentComplete + "' onchange='updatePart(\"" + a.partNumber + "\",\"percentComplete\",this.value)'></td>";
             h += "<td class='editable-cell'><select onchange='updatePart(\"" + a.partNumber + "\",\"status\",this.value)'>";
             h += "<option value='Pending' " + (a.status==="Pending"?"selected":"") + ">Pending</option>";
@@ -288,3 +230,4 @@
   </script>
 </body>
 </html>
+
