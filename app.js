@@ -46,15 +46,20 @@ const JWT_SECRET = 'super-secret-key-change-in-production';
 
 async function initDB() {
   try {
-    await sequelize.sync({ force: false });
+    // FORCE TRUE: Drops and recreates tables to match the current model exactly
+    await sequelize.sync({ force: true }); 
+    
     const count = await User.count();
     if (count === 0) {
       const hash = await bcrypt.hash('admin123', 10);
       await User.create({ username: 'admin', passwordHash: hash, role: 'admin' });
       console.log('✅ Default Admin Created: admin / admin123');
+    } else {
+      console.log('ℹ️ Users already exist.');
     }
   } catch (err) {
     console.error('❌ DB Init Error:', err);
+    throw err; // Throw error to stop server startup if DB fails
   }
 }
 
@@ -105,7 +110,7 @@ app.get('/api/assemblies', authenticate, (req, res) => {
   });
 });
 
-// FIXED: Batch Update (Removed invalid field assignment)
+// Batch Update (Qty Comp -> %)
 app.post('/api/update-part-batch', authenticate, async (req, res) => {
   const { partNumber, qtyCompleted, percentComplete } = req.body;
   if (!partNumber) return res.status(400).json({ error: 'Missing partNumber' });
@@ -114,12 +119,8 @@ app.post('/api/update-part-batch', authenticate, async (req, res) => {
     const assembly = await Assembly.findByPk(partNumber);
     if (!assembly) return res.status(404).json({ error: 'Part not found' });
     
-    // We only update percentComplete and status. 
-    // qtyCompleted is calculated on the fly in the UI, not stored in DB.
     if (percentComplete !== undefined) {
       assembly.percentComplete = percentComplete;
-      
-      // Auto-update status
       if (percentComplete >= 100) assembly.status = 'Complete';
       else if (percentComplete > 0) assembly.status = 'In Progress';
       else if (assembly.status === 'Complete') assembly.status = 'In Progress';
@@ -134,7 +135,7 @@ app.post('/api/update-part-batch', authenticate, async (req, res) => {
   }
 });
 
-// API: Update Part (Single Field - Status or %)
+// Single Update
 app.post('/api/update-part', authenticate, (req, res) => {
   const { partNumber, field, value } = req.body;
   if (!partNumber || !field) return res.status(400).json({ error: 'Missing data' });
@@ -162,7 +163,7 @@ app.post('/api/update-part', authenticate, (req, res) => {
   }
 });
 
-// API: Import Excel (Admin Only)
+// Import Excel
 app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   try {
@@ -203,7 +204,7 @@ app.post('/api/import', authenticate, upload.single('file'), requireAdmin, async
   }
 });
 
-// API: Users (Get, Create, Delete)
+// User APIs
 app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
   const users = await User.findAll({ attributes: ['username', 'role'] });
   res.json(users);
@@ -238,12 +239,18 @@ app.post('/api/users/delete', authenticate, requireAdmin, async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 async function start() {
-  await initDB();
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log('========================================');
-    console.log('  CT20 Assembly Tracker - LIVE!');
-    console.log('  Listening on port ' + PORT);
-    console.log('========================================');
-  });
+  try {
+    await initDB();
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log('========================================');
+      console.log('  CT20 Assembly Tracker - LIVE!');
+      console.log('  Listening on port ' + PORT);
+      console.log('========================================');
+    });
+  } catch (err) {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  }
 }
 start();
+
